@@ -1,11 +1,11 @@
 application:
   name: HK Weather
   version: 1.0.0
-  description: This is a straightforward application that renders simple text on the screen and demonstrates the basic method of creating interactive applications using the LVGL graphics library.
+  description: This is an application running on Vobot mini dock to show weather information from Hong Kong Observatory (HKO) open data.
   author: Vobot
-  author_email: support@getvobot.com
+  author_email: app.shut831@passmail.net
   bugs: 
-  repository: 
+  repository: https://github.com/itandy848/vobot/tree/main/hk_weather
   licenses: MIT
 
 system_requirements:
