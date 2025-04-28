@@ -11,3 +11,5 @@ User is also allowed to change the followings in application setting:
 3. Indoor sensor URL
 
 HKO data is pulled every 10 mins. User can force an immediate pull by pressing the encoder knob.
+
+![Screenshot](hk_weather_screenshot.png)
