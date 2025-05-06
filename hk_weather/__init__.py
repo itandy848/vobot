@@ -138,17 +138,19 @@ def round_text(text):
     except:
         return "0"
 
-def set_status(message, error=False):
+def set_status(message, error=False, source=""):
     global error_message
-    if error:
-        error_message = message
 
-    if message is None or message == "":
-        lbl_status_panel.add_flag(lv.obj.FLAG.HIDDEN)
-    else:
-        lbl_status.set_style_text_color(lv.palette_main(lv.PALETTE.RED) if error else lv.color_white(), lv.PART.MAIN)
-        lbl_status.set_text(message)
-        lbl_status_panel.remove_flag(lv.obj.FLAG.HIDDEN)
+    if scr:
+        if error or not message:
+            error_message = message
+
+        if message is None or message == "":
+            lbl_status_panel.add_flag(lv.obj.FLAG.HIDDEN)
+        else:
+            lbl_status.set_style_text_color(lv.palette_main(lv.PALETTE.RED) if error else lv.color_white(), lv.PART.MAIN)
+            lbl_status.set_text("{}{}".format(f"({source}) " if source else "", message))
+            lbl_status_panel.remove_flag(lv.obj.FLAG.HIDDEN)
 
 def csv_get_value(csv, key):
     lines = csv.split('\n')
@@ -267,11 +269,11 @@ async def retrieve_data():
 
     try:
         # get HKO data
-        temp, temp_updtime = await get_hko_location_csv_values(api_url['temperature'], 2, 0)
-        humidity, humidity_updtime = await get_hko_location_csv_values(api_url['humidity'], 2, 0)
-        temp_maxmin, temp_maxmin_updtime = await get_hko_location_csv_values(api_url['temperature_maxmin'], [2,3], 0)
-        icon_idx, icon_updtime = await get_weather_icon()
-        forecast_data, forecast_updtime = await get_forecast_data()
+        new_temp, new_temp_updtime = await get_hko_location_csv_values(api_url['temperature'], 2, 0)
+        new_humidity, new_humidity_updtime = await get_hko_location_csv_values(api_url['humidity'], 2, 0)
+        new_temp_maxmin, new_temp_maxmin_updtime = await get_hko_location_csv_values(api_url['temperature_maxmin'], [2,3], 0)
+        new_icon_idx, new_icon_updtime = await get_weather_icon()
+        new_forecast_data, new_forecast_updtime = await get_forecast_data()
 
         # get Shelly data
         if enable_shelly:
@@ -281,6 +283,13 @@ async def retrieve_data():
                 shelly_rh = shelly_data[1]
                 shelly_updtime = shelly_data[2][-8:]
 
+        # update global var all at once
+        temp, temp_updtime = new_temp, new_temp_updtime
+        humidity, humidity_updtime = new_humidity, new_humidity_updtime
+        temp_maxmin, temp_maxmin_updtime = new_temp_maxmin, new_temp_maxmin_updtime
+        icon_idx, icon_updtime = new_icon_idx, new_icon_updtime
+        forecast_data, forecast_updtime = new_forecast_data, new_forecast_updtime
+
         # all data is ready
         pending_refresh_ui = True
         set_status(None)
@@ -288,7 +297,7 @@ async def retrieve_data():
 
         return True
     except Exception as e:
-        set_status("{}, {}".format(type(e).__name__, e.args), True)
+        set_status("{}, {}".format(type(e).__name__, e.args), True, "retrieve_data()")
         last_refresh_ticks_ms = time.ticks_ms()
         return False
 
@@ -303,8 +312,9 @@ def update_ui():
         lbl_temp.set_text(round_text(temp))
 
         # minimum and maximum temperature
-        lbl_temp_min.set_text(round_text(temp_maxmin[1]))
-        lbl_temp_max.set_text(round_text(temp_maxmin[0]))
+        if temp_maxmin:
+            lbl_temp_min.set_text(round_text(temp_maxmin[1]))
+            lbl_temp_max.set_text(round_text(temp_maxmin[0]))
 
         # humidity
         lbl_humidity.set_text("{}".format(humidity))
@@ -340,7 +350,7 @@ def update_ui():
             lbl_shelly_humidity.set_text("{}".format(round_text(shelly_rh)))
             lbl_shelly_updtime.set_text(shelly_updtime)
     except Exception as e:
-        set_status("Error updating UI: {}".format(e), True)
+        set_status("{}, {}".format(type(e).__name__, e.args), True, "update_ui()")
 
     pending_refresh_ui = False
 
@@ -432,6 +442,9 @@ def event_handler(event):
             last_refresh_ticks_ms = None
         elif e_key in (lv.KEY.RIGHT, lv.KEY.LEFT):
             switch_page()
+    elif e_code == lv.EVENT.FOCUSED:
+        if not lv.group_get_default().get_editing():
+            lv.group_get_default().set_editing(True)
 
 async def on_boot(apm):
     global app_mgr
@@ -461,8 +474,12 @@ async def on_resume():
         update_ui()
 
 async def on_stop():
+    global scr
+
     if scr:
         scr.clean()
+        scr.delete_async()
+        scr = None
 
 async def on_start():
     global scr
@@ -689,7 +706,7 @@ async def on_start():
     lbl_status.set_long_mode(lv.label.LONG.SCROLL_CIRCULAR)
     lbl_status.set_style_text_font(lv.font_ascii_bold_18, 0)
 
-    set_status(error_message, error_message)
+    set_status(error_message, error_message, "on_start()")
 
     lv.scr_load(scr)
 
