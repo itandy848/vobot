@@ -14,7 +14,7 @@ app_mgr = None
 SCR_WIDTH, SCR_HEIGHT = peripherals.screen.screen_resolution
 
 # App Icon
-ICON = 'A:apps/hk_weather/resources/hko_logo.png'
+ICON = f'A:apps/{NAME}/resources/hko_logo.png'
 
 CAN_BE_AUTO_SWITCHED = True
 
@@ -306,7 +306,7 @@ def update_ui():
 
     try:
         # weather icon
-        icon_weather.set_src('A:apps/hk_weather/resources/pic{}.png'.format(icon_idx))
+        icon_weather.set_src(f'A:apps/{NAME}/resources/pic{icon_idx}.png')
 
         # temperature
         lbl_temp.set_text(round_text(temp))
@@ -336,7 +336,7 @@ def update_ui():
                 if 'week' in obj_forecast[i] and 'week' in forecast_data[i]:
                     obj_forecast[i]['week'].set_text(forecast_data[i]['week'][0:3])
                     obj_forecast[i]['icon'].set_src(
-                        'A:apps/hk_weather/resources/pic{}.png'.format(forecast_data[i]['ForecastIcon']))
+                        'A:apps/{}/resources/pic{}.png'.format(NAME, forecast_data[i]['ForecastIcon']))
                     obj_forecast[i]['icon'].set_scale(forecast_config[forecast_days]['icon_scale'])
                     obj_forecast[i]['temp'].set_text("{}-{}".format(forecast_data[i]['forecastMintemp']['value'],
                                                                     forecast_data[i]['forecastMaxtemp']['value']))
@@ -564,7 +564,7 @@ async def on_start():
 
     # minimum and maximum temperature
     icon_temp_min = lv.image(scr)
-    icon_temp_min.set_src('A:apps/hk_weather/resources/icon_wea_arrowdown.png')
+    icon_temp_min.set_src(f'A:apps/{NAME}/resources/icon_wea_arrowdown.png')
     icon_temp_min.set_pos(130, 80)
 
     lbl_temp_min = lv.label(scr)
@@ -578,7 +578,7 @@ async def on_start():
     lbl_temp_min_degree.set_style_text_font(lv.font_ascii_bold_18, 0)
 
     icon_temp_max = lv.image(scr)
-    icon_temp_max.set_src('A:apps/hk_weather/resources/icon_wea_arrowup.png')
+    icon_temp_max.set_src(f'A:apps/{NAME}/resources/icon_wea_arrowup.png')
     icon_temp_max.set_pos(210, 80)
 
     lbl_temp_max = lv.label(scr)
@@ -614,7 +614,7 @@ async def on_start():
         # home icon
         icon_home = lv.image(btn_shelly)
         icon_home.set_pos(10, 15)
-        icon_home.set_src('A:apps/hk_weather/resources/indoor_icon.png')
+        icon_home.set_src(f'A:apps/{NAME}/resources/indoor_icon.png')
 
         lbl_shelly_temp = lv.label(btn_shelly)
         lbl_shelly_temp.set_pos(120, 15)
@@ -635,7 +635,7 @@ async def on_start():
         lbl_shelly_humidity_degree.set_style_text_font(lv.font_ascii_bold_28, 0)
 
         icon_shelly = lv.image(btn_shelly)
-        icon_shelly.set_src('A:apps/hk_weather/resources/shelly_icon.png')
+        icon_shelly.set_src(f'A:apps/{NAME}/resources/shelly_icon.png')
         icon_shelly.set_pos(120, 80)
 
         lbl_shelly_updtime = lv.label(btn_shelly)
