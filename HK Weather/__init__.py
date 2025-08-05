@@ -53,10 +53,11 @@ humidity = None
 humidity_updtime = None
 temp_maxmin = None
 temp_maxmin_updtime = None
-icon_idx = None
-icon_updtime = None
+# icon_idx = None
+# icon_updtime = None
 forecast_data = None
 forecast_updtime = None
+weather_icons = []
 
 # Shelly data
 enable_shelly = False
@@ -76,6 +77,9 @@ last_switch_ticks_ms = None
 
 # page control
 current_page = 0
+
+# weather icon control
+current_icon = 0
 
 # last error message
 error_message = ''
@@ -126,6 +130,7 @@ api_url = {
     'humidity': 'https://data.weather.gov.hk/weatherAPI/hko_data/regional-weather/latest_1min_humidity.csv',
     'temperature_maxmin': 'https://data.weather.gov.hk/weatherAPI/hko_data/regional-weather/latest_since_midnight_maxmin.csv',
     'forecast': 'https://data.weather.gov.hk/weatherAPI/opendata/weather.php?dataType=fnd&lang=en',
+    'warnings': 'https://data.weather.gov.hk/weatherAPI/opendata/weather.php?dataType=warningInfo&lang=en',
 }
 shelly_url = ''
 
@@ -191,6 +196,20 @@ async def get_forecast_data():
         weather_time = get_hko_proper_time(data['updateTime'])
 
     return weather_data, weather_time
+
+async def get_warning_data():
+    icons = []
+    data = await get_hko_weather_json(api_url['warnings'])
+    if 'details' in data:
+        for warning in data['details']:
+            icon_name = ''
+            if 'subtype' in warning:
+                icon_name = str(warning['subtype']).lower()
+            else:
+                icon_name = str(warning['warningStatementCode']).lower()
+            icons.append(f'A:apps/{NAME}/resources/{icon_name}.png')
+
+    return icons
 
 async def get_hko_weather_json(url):
     data = None
@@ -258,8 +277,8 @@ async def get_shelly_data():
     return data
 
 async def retrieve_data():
-    global icon_idx, icon_updtime, temp, temp_updtime, temp_maxmin, temp_maxmin_updtime, humidity, humidity_updtime
-    global forecast_data, forecast_updtime
+    global temp, temp_updtime, temp_maxmin, temp_maxmin_updtime, humidity, humidity_updtime
+    global forecast_data, forecast_updtime, weather_icons
     global last_refresh_ticks_ms
     global pending_retrieval
     global pending_refresh_ui
@@ -274,6 +293,7 @@ async def retrieve_data():
         new_temp_maxmin, new_temp_maxmin_updtime = await get_hko_location_csv_values(api_url['temperature_maxmin'], [2,3], 0)
         new_icon_idx, new_icon_updtime = await get_weather_icon()
         new_forecast_data, new_forecast_updtime = await get_forecast_data()
+        new_warnings = await get_warning_data()
 
         # get Shelly data
         if enable_shelly:
@@ -287,8 +307,12 @@ async def retrieve_data():
         temp, temp_updtime = new_temp, new_temp_updtime
         humidity, humidity_updtime = new_humidity, new_humidity_updtime
         temp_maxmin, temp_maxmin_updtime = new_temp_maxmin, new_temp_maxmin_updtime
-        icon_idx, icon_updtime = new_icon_idx, new_icon_updtime
+        # icon_idx, icon_updtime = new_icon_idx, new_icon_updtime
         forecast_data, forecast_updtime = new_forecast_data, new_forecast_updtime
+
+        # update weather icons
+        new_warnings.append(f'A:apps/{NAME}/resources/pic{new_icon_idx}.png')
+        weather_icons = new_warnings.copy()
 
         # all data is ready
         pending_refresh_ui = True
@@ -306,7 +330,7 @@ def update_ui():
 
     try:
         # weather icon
-        icon_weather.set_src(f'A:apps/{NAME}/resources/pic{icon_idx}.png')
+        icon_weather.set_src(weather_icons[current_icon])
 
         # temperature
         lbl_temp.set_text(round_text(temp))
@@ -432,6 +456,17 @@ def switch_page():
     pending_refresh_ui = True
     last_switch_ticks_ms = time.ticks_ms()
 
+def switch_icon():
+    global current_icon
+    global pending_refresh_ui
+
+    if len(weather_icons) > 1:
+        current_icon += 1
+        if current_icon >= len(weather_icons):
+            current_icon = 0
+        pending_refresh_ui = True
+
+
 def event_handler(event):
     global last_refresh_ticks_ms
 
@@ -465,9 +500,11 @@ async def on_running_foreground():
     elif last_refresh_ticks_ms is None or time.ticks_diff(time.ticks_ms(), last_refresh_ticks_ms) > REFRESH_INTERVAL_MS:
         set_status("Retrieving network data...")
         pending_retrieval = True
-    elif enable_shelly and last_switch_ticks_ms and time.ticks_diff(time.ticks_ms(),
+    elif last_switch_ticks_ms and time.ticks_diff(time.ticks_ms(),
                                                                         last_switch_ticks_ms) > PAGE_SWITCH_INTERVAL_MS:
-        switch_page()
+        if enable_shelly:
+            switch_page()
+        switch_icon()
 
 async def on_resume():
     if last_refresh_ticks_ms:
