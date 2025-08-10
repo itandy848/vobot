@@ -58,6 +58,8 @@ temp_maxmin_updtime = None
 forecast_data = None
 forecast_updtime = None
 weather_icons = []
+obj_warnings = []
+MAX_WARNINGS = 5
 
 # Shelly data
 enable_shelly = False
@@ -346,6 +348,14 @@ def update_ui():
         # HKO station
         lbl_station.set_text(station)
 
+        # show weather icons
+        for i in range(MAX_WARNINGS):
+            if i < len(weather_icons)-1:
+                obj_warnings[i].set_src(weather_icons[i])
+                obj_warnings[i].remove_flag(lv.obj.FLAG.HIDDEN)
+            else:
+                obj_warnings[i].add_flag(lv.obj.FLAG.HIDDEN)
+
         # HKO update status
         lbl_hko_updtime.set_text(temp_updtime[-8:])
 
@@ -631,7 +641,22 @@ async def on_start():
     # station
     lbl_station = lv.label(scr)
     lbl_station.set_pos(0, 110)
+    lbl_station.set_width(110)
     lbl_station.set_style_text_font(lv.font_ascii_14, 0)
+    lbl_station.set_long_mode(lv.label.LONG.SCROLL_CIRCULAR)
+
+    # warning icons
+    global obj_warnings
+    obj_warnings = []
+    offset = (SCR_WIDTH / 2) - 2.5 * 20
+    for i in range(MAX_WARNINGS):
+        icon_warning = lv.image(scr)
+        icon_warning.set_pos(int(offset), 104)
+        icon_warning.set_size(20, 20)
+        icon_warning.set_scale(51)
+
+        obj_warnings.append(icon_warning)
+        offset += 20
 
     # HKO update time
     lbl_hko_updtime = lv.label(scr)
