@@ -285,6 +285,7 @@ async def retrieve_data():
     global pending_retrieval
     global pending_refresh_ui
     global shelly_tc, shelly_rh, shelly_updtime
+    global current_icon
 
     pending_retrieval = False
 
@@ -314,6 +315,8 @@ async def retrieve_data():
 
         # update weather icons
         new_warnings.append(f'A:apps/{NAME}/resources/pic{new_icon_idx}.png')
+        if len(weather_icons) != len(new_warnings):
+            current_icon = 0
         weather_icons = new_warnings.copy()
 
         # all data is ready
@@ -510,8 +513,7 @@ async def on_running_foreground():
     elif last_refresh_ticks_ms is None or time.ticks_diff(time.ticks_ms(), last_refresh_ticks_ms) > REFRESH_INTERVAL_MS:
         set_status("Retrieving network data...")
         pending_retrieval = True
-    elif last_switch_ticks_ms and time.ticks_diff(time.ticks_ms(),
-                                                                        last_switch_ticks_ms) > PAGE_SWITCH_INTERVAL_MS:
+    elif last_switch_ticks_ms and time.ticks_diff(time.ticks_ms(), last_switch_ticks_ms) > PAGE_SWITCH_INTERVAL_MS:
         if enable_shelly:
             switch_page()
         switch_icon()
