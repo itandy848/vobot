@@ -1,0 +1,22 @@
+application:
+  name: Crypto View
+  version: 1.0.0
+  description: This is an application running on Vobot mini dock that shows current crypto price and history provided by Kraken API.
+  author: Vobot
+  author_email: app.shut831@passmail.net
+  bugs: 
+  repository: https://github.com/itandy848/vobot/tree/main/Crypto%20View
+  licenses: MIT
+
+attributes:
+    enable_auto_carousel: true
+
+system_requirements:
+  minimum_version: 1.1.0
+  compatible_devices:
+    - MiniDock
+
+files:
+  include:
+    - __init__.py
+    - service.py

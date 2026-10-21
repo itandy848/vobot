@@ -1,0 +1,390 @@
+import net
+import time
+import asyncio
+import clocktime
+import lvgl as lv
+import peripherals
+from micropython import const
+from .service import get_stock_details, _TREND_LIMIT
+
+NAME = "Crypto View" # App name
+CAN_BE_AUTO_SWITCHED = True # Whether the App supports auto-switching in carousel mode
+
+# App Icon
+ICON = f'A:apps/{NAME}/resources/crypto_logo.png'
+
+_MENU_ITEM_FOCUSED = lv.color_hex3(0x022) # Background color when a widget is focused
+_MENU_ITEM_DEFOCUSED = lv.color_hex3(0x000) # Background color when a widget is unfocused
+_STOCK_UPDATE_INTERVAL = const(60) # Time interval for updating stock information (in seconds). Should be at least 60s.
+_SCR_WIDTH, _SCR_HEIGHT = peripherals.screen.screen_resolution  # Get the screen size from peripherals
+_ITEM_WIDTH, _ITEM_HEIGHT = (_SCR_WIDTH, const(80)) # Size of a single stock information item
+
+_NO_SUBUNIT_CURRENCIES = ["BTC", "ETH", "JPY", "KRW", "VND", "CLP"] # Currencies that don't commonly use subunits (cents)
+_THREE_DECIMAL_CURRENCIES = ["KWD", "BHD", "OMR", "IQD", "JOD", "TND", "LYD"] # Currencies with three decimal places
+
+# Default stock configuration
+# Use https://api.kraken.com/0/public/AssetPairs for full list of tradable pairs
+_DEFAULT_STOCK_SYMBOLS = ["XETHZUSD", "XXBTZUSD"]
+
+_CURRENCY_SYMBOLS= {
+        "USD": "$",   # US Dollar
+        "EUR": "€",   # Euro
+        "GBP": "£",   # British Pound
+        "JPY": "¥",   # Japanese Yen
+        "INR": "₹",   # Indian Rupee
+        "KRW": "₩",   # South Korean Won
+        "RUB": "₽",   # Russian Ruble
+        "TRY": "₺",   # Turkish Lira
+        "NGN": "₦",   # Nigerian Naira
+        "THB": "THB",   # Thai Baht
+        "VND": "₫",   # Vietnamese Dong
+        "PLN": "zł",   # Polish Zloty
+        "BRL": "R$",  # Brazilian Real
+        "ILS": "₪",   # Israeli New Shekel
+        "AUD": "A$",  # Australian Dollar
+        "CAD": "C$",  # Canadian Dollar
+        "SGD": "S$",  # Singapore Dollar
+        "CHF": "CHF", # Swiss Franc
+        # ... Add more as needed
+    }
+
+_scr = None  # Initialize screen variable
+_app_mgr = None  # Initialize app manager variable
+_stock_count = 0 # Number of stock information items currently displayed
+_last_updated = 0 # Timestamp of the last stock information update
+_stock_details = [] # Current stock information for multiple stocks
+_stock_symbols = _DEFAULT_STOCK_SYMBOLS # Current stock configuration
+
+def get_settings_json():
+    return {
+        "category": "Finance",
+        "form": [{
+            "type": "input",
+            "default": ",".join(_DEFAULT_STOCK_SYMBOLS),
+            "caption": "Crypto Symbols",
+            "name": "stocks",
+            "validation": ":,\w+",
+            "attributes": {"maxLength": 60, "placeholder": "e.g., AAPL:NASDAQ"},
+            "tip": "For multiple crypto, use commas, like 'BTC:ETH,ADA:DOGE'.",
+            "hint": {
+                "url": "https://google.com/finance/",
+                "label": "Click here to search for stock codes."
+            }
+        }]
+    }
+
+def _load_config():
+    # Load application configuration
+    global _stock_symbols, _last_updated, _stock_details
+    stock_cfg = _app_mgr.config()
+    symbols = stock_cfg.get("stocks", None)
+    if symbols:
+        # Check if configuration has changed; if so, need to refresh stock information
+        temp_symbols = [x.strip() for x in symbols.strip(",").split(",") ]
+        if _stock_symbols != temp_symbols:
+            _last_updated = 0
+            _stock_details = []
+            _stock_symbols = temp_symbols
+        print(f"{NAME}: {_stock_symbols}")
+        return True
+    elif symbols == "":
+        # Stock configuration is empty, prompt user to configure
+        _stock_symbols = []
+        _stock_details = []
+        _app_mgr.error(
+            "Crypto View App Not Configured",
+            "Please go to the application settings to configure stock information.",
+            confirm = "OK", cancel=False, cb=lambda res: asyncio.create_task(_app_mgr.exit()))
+        return False
+    else:
+        # First load? Save default configuration
+        stock_cfg["stocks"] = ",".join(_DEFAULT_STOCK_SYMBOLS)
+        _app_mgr.config(stock_cfg)
+        return True
+
+
+def format_float(value, decimals=2):
+    # Establish the decimal string portion first
+    fmt = "{:." + str(decimals) + "f}"
+    dec_part = fmt.format(value).split('.')[-1] if decimals > 0 else ""
+
+    # Format the integer part with commas
+    int_part = "{:,}".format(int(value))
+
+    # Combine them together
+    return f"{int_part}.{dec_part}" if decimals > 0 else int_part
+
+async def display_single_stock(parent, price_info):
+    # Display information for a single stock
+    if ('symbol' not in price_info) or (price_info['symbol'] is None): return None
+
+    # Create container
+    menu_cont = lv.menu_cont(parent)
+    menu_cont.set_size(_ITEM_WIDTH, _ITEM_HEIGHT)
+    menu_cont.set_style_pad_all(0, lv.PART.MAIN)
+
+    cont = lv.obj(menu_cont)
+    cont.set_style_radius(0, lv.PART.MAIN)
+    cont.remove_flag(lv.obj.FLAG.SCROLLABLE)
+    cont.set_size(_ITEM_WIDTH, _ITEM_HEIGHT)
+    cont.set_style_bg_color(lv.color_hex3(0x000), lv.PART.MAIN)
+    cont.set_style_border_side(lv.BORDER_SIDE.BOTTOM, lv.PART.MAIN)
+    cont.set_style_border_color(lv.color_hex3(0xFFF), lv.PART.MAIN)
+
+    # Display symbol
+    symbol = lv.label(cont)
+    symbol.set_text(price_info["symbol"])
+    symbol.set_width(_ITEM_WIDTH // 3 + 5)
+    symbol.align(lv.ALIGN.TOP_LEFT, -8, -12)
+    symbol.set_long_mode(lv.label.LONG.SCROLL_CIRCULAR)
+    symbol.set_style_text_font(lv.font_ascii_bold_28, lv.PART.MAIN)
+    symbol.set_style_text_align(lv.TEXT_ALIGN.LEFT, lv.PART.MAIN)
+    symbol.set_style_text_color(lv.color_hex(0x0BB4ED), lv.PART.MAIN)
+
+    curr_price = price_info["currentPrice"]
+    prev_close = price_info["previousClose"]
+    if curr_price is not None and prev_close != 0:
+        # Choose currency symbol to display
+        if price_info["currency"] is None:
+            currency = _CURRENCY_SYMBOLS["USD"]
+        elif price_info["currency"].upper() in _CURRENCY_SYMBOLS:
+            currency = _CURRENCY_SYMBOLS[price_info["currency"].upper()]
+        elif price_info["currency"] == "Unknown":
+            currency = ""
+        else:
+            currency = price_info["currency"]
+
+        # determine decimal places
+        if price_info["symbol"] in _NO_SUBUNIT_CURRENCIES:
+            dec_places = 0
+        elif price_info["symbol"] in _THREE_DECIMAL_CURRENCIES:
+            dec_places = 3
+        else:
+            dec_places = 2
+
+        curr_price = round(curr_price, dec_places)
+        prev_close = round(prev_close, dec_places)
+
+        diff_amount = curr_price - prev_close
+        color = 0xA50E0E if diff_amount < 0 else 0x137333
+        bgcolor = 0xFCE8E6 if diff_amount < 0 else 0xE6f4EA
+        arrow = lv.SYMBOL.DOWN if diff_amount < 0 else lv.SYMBOL.UP
+        prefix = "-" + currency if diff_amount < 0 else "+" + currency
+
+        if diff_amount == 0: prefix = ""
+        if diff_amount < 0: diff_amount = -diff_amount
+
+        amount_number = format_float(curr_price, dec_places)
+        diff_amount_number = format_float(diff_amount, dec_places)
+
+        amount_text = currency + amount_number
+        # diff_amount_text = prefix + diff_amount_number
+        diff_amount_text = diff_amount_number
+
+        amount = lv.label(cont)
+        amount.set_text(amount_text)
+        amount.set_width(_ITEM_WIDTH // 2 + 5)
+        amount.set_long_mode(lv.label.LONG.SCROLL_CIRCULAR)
+        amount.set_style_text_font(lv.font_ascii_bold_28, 0)
+        amount.set_style_text_color(lv.color_hex(0xFFFE66), 0)
+        amount.align(lv.ALIGN.BOTTOM_LEFT, -12, 10)
+
+        ratio_obj = lv.obj(cont)
+        ratio_obj.set_style_bg_color(lv.color_hex(bgcolor), 0)
+        ratio_obj.set_size(160, 64)
+        ratio_obj.set_style_pad_all(0, 0)
+        ratio_obj.set_style_border_width(0, 0)
+        ratio_obj.align(lv.ALIGN.BOTTOM_RIGHT, 10, 10)
+
+        diff_amount = lv.label(ratio_obj)
+        diff_amount.set_long_mode(lv.label.LONG.SCROLL_CIRCULAR)
+        diff_amount.set_style_text_font(lv.font_ascii_bold_28, 0)
+        diff_amount.set_text(diff_amount_text)
+        diff_amount.set_style_text_color(lv.color_hex(color), 0)
+        diff_amount.align(lv.ALIGN.BOTTOM_RIGHT, -15, -30)
+
+        arrow_text = lv.label(ratio_obj)
+        arrow_text.set_text(arrow)
+        arrow_text.set_style_text_color(lv.color_hex(color), 0)
+        arrow_text.align_to(diff_amount, lv.ALIGN.OUT_LEFT_MID, -4, 0)
+
+        # Display chart
+        chart_style = lv.style_t()
+        chart_style.init()
+        chart_style.set_bg_opa(lv.OPA.TRANSP)
+        chart_style.set_bg_color(lv.palette_main(lv.PALETTE.GREEN))
+        chart_style.set_border_width(0)
+
+        chart = lv.chart(ratio_obj)
+        chart.set_size(130, 40)
+        chart.center()
+        chart.set_type(lv.chart.TYPE.LINE)
+        chart.set_update_mode(lv.chart.UPDATE_MODE.SHIFT)
+        chart.add_style(chart_style, lv.PART.MAIN)
+        chart.set_style_size(0, 0, lv.PART.INDICATOR)
+        chart.set_div_line_count(0, 0)
+        chart.align(lv.ALIGN.BOTTOM_RIGHT, -15, 0)
+        chart.set_point_count(_TREND_LIMIT)
+        chart.set_range(lv.chart.AXIS.PRIMARY_Y, int(min(price_info['trend'] + [prev_close])), int(max(price_info['trend'] + [prev_close])))
+        chart.set_range(lv.chart.AXIS.SECONDARY_Y, int(min(price_info['trend'] + [prev_close])), int(max(price_info['trend'] + [prev_close])))
+
+        data = chart.add_series(lv.palette_main(lv.PALETTE.GREEN), lv.chart.AXIS.PRIMARY_Y)
+        for price in price_info['trend']:
+            px = int(price)
+            chart.set_next_value(data, px)
+
+        closing = chart.add_series(lv.palette_main(lv.PALETTE.RED), lv.chart.AXIS.SECONDARY_Y)
+        chart.set_all_value(closing, int(prev_close))
+
+        chart.refresh()
+
+    else:
+        # No price information obtained, indicate data source not available
+        tip_label = lv.label(cont)
+        tip_label.set_text("Crypto information not found.")
+        tip_label.set_width(_ITEM_WIDTH)
+        tip_label.align(lv.ALIGN.BOTTOM_MID, 0, 10)
+        tip_label.set_long_mode(lv.label.LONG.SCROLL_CIRCULAR)
+        tip_label.set_style_text_font(lv.font_ascii_18, lv.PART.MAIN)
+        tip_label.set_style_text_align(lv.TEXT_ALIGN.CENTER, lv.PART.MAIN)
+        tip_label.set_style_text_color(lv.color_hex(0x888888), lv.PART.MAIN)
+
+    return menu_cont
+
+def menu_cont_event_handler(e):
+    # Widget event callback for implementing widget switching
+    global _stock_count
+    e_code = e.get_code()
+    target = e.get_target_obj()
+    lv_group = lv.group_get_default()
+
+    if lv_group.get_focused() == target and lv_group.get_editing():
+        lv_group.set_editing(False)
+
+    if e_code == lv.EVENT.FOCUSED:
+        target.scroll_to_view(lv.ANIM.OFF)
+        if _stock_count > 4: target.get_child(0).set_style_bg_color(_MENU_ITEM_FOCUSED, 0)
+
+    elif e_code == lv.EVENT.DEFOCUSED:
+        if _stock_count > 4: target.get_child(0).set_style_bg_color(_MENU_ITEM_DEFOCUSED, 0)
+    elif e_code == lv.EVENT.DELETE:
+        # FIXME: When a widget is deleted, lv.EVENT.DELETE is triggered first, then lv.EVENT.DEFOCUSED,
+        # causing an error when setting background color [widget already deleted]
+        _stock_count = 0
+
+async def display_multiple_stocks():
+    global _stock_count
+
+    if not _scr: return
+    _scr.clean()
+
+    # Create a menu object
+    menu = lv.menu(_scr)
+    menu.set_size(_SCR_WIDTH, _SCR_HEIGHT)
+    menu.set_style_bg_color(lv.color_hex3(0x000), lv.PART.MAIN)
+    menu.center()
+
+    # Create a main page
+    main_page = lv.menu_page(menu, None)
+    # remove the scroll bar
+    main_page.set_scrollbar_mode(lv.SCROLLBAR_MODE.OFF)
+
+    for price_info in _stock_details:
+        # Try to render stock information
+        try:
+            menu_cont = await display_single_stock(main_page, price_info)
+            if not menu_cont: continue
+            menu_cont.add_event_cb(menu_cont_event_handler, lv.EVENT.ALL, None)
+            lv.group_get_default().add_obj(menu_cont)
+            _stock_count += 1
+        except Exception as e:
+            print("{}".format(e))
+            pass
+
+    if _stock_count > 0:
+        # For the last stock information widget, no need to add an underline
+        main_page.get_child(-1).get_child(0).set_style_border_width(0, lv.PART.MAIN)
+        menu.set_page(main_page)
+        # Focus on the first stock information
+        lv.group_focus_obj(main_page.get_child(0))
+    else:
+        # No stock information? Display "No Data" message
+        _scr.clean()
+        tip_label = lv.label(_scr)
+        tip_label.set_text("Not Data...")
+        tip_label.set_style_text_font(lv.font_ascii_18, lv.PART.MAIN)
+        tip_label.set_style_text_color(lv.color_hex(0xA7A7A7), lv.PART.MAIN)
+        tip_label.center()
+
+async def on_start():
+    global _scr
+    if not _scr:
+        _scr = lv.obj()
+        _scr.set_style_bg_color(lv.color_hex3(0x000), lv.PART.MAIN)
+        _app_mgr.enter_root_page()
+        lv.screen_load(_scr)
+
+    # Check if network is connected
+    if not net.connected():
+        _app_mgr.error(
+            "Network Not Connected",
+            "Please wait for the network to be fully connected before accessing the app.",
+            confirm = False, cb=lambda res: asyncio.create_task(_app_mgr.exit()))
+        return
+
+    # Load App configuration
+    if not _load_config(): return
+
+    # Display "Loading stock information" message
+    loading_label = lv.label(_scr)
+    loading_label.set_text("Fetching Crypto data...")
+    loading_label.align(lv.ALIGN.BOTTOM_MID, 0, -20)
+    loading_label.set_style_text_font(lv.font_ascii_22, lv.PART.MAIN)
+    loading_label.set_style_text_color(lv.color_hex3(0xFFF), lv.PART.MAIN)
+
+    # If stock information already exists, display it directly
+    if _stock_details: await display_multiple_stocks()
+
+async def on_stop():
+    """Clean up the screen and leave the app when it stops."""
+    global _scr
+    if _scr:
+        _scr.clean()
+        _scr.delete_async()
+        _scr = None
+        _app_mgr.leave_root_page()
+
+async def on_boot(apm):
+    global _app_mgr
+    _app_mgr = apm
+
+async def on_running_foreground():
+    """
+    Handle actions when the app is running in the foreground.
+    """
+    global _last_updated, _stock_details, _stock_count
+    # When no stock information is displayed, no need to update
+    if _scr.get_child_count() < 1: return
+
+    now = clocktime.now()
+    # No need to update if network not connected / time not synchronized / no stock configuration
+    if not net.connected() or now < 0 or not _stock_symbols: return
+    # No need to update if time interval not reached
+    if now - _last_updated < _STOCK_UPDATE_INTERVAL: return
+
+    # Time interval reached, fetch stock information again
+    _stock_details = await get_stock_details(_stock_symbols)
+
+    # Redraw stock information
+    await display_multiple_stocks()
+    _last_updated = now
+
+async def on_running_background():
+    global _stock_details
+
+    now = clocktime.now()
+    # No need to update if network not connected / time not synchronized / no stock configuration
+    if not net.connected() or now < 0 or not _stock_symbols: return
+
+    # fetch stock information
+    _stock_details = await get_stock_details(_stock_symbols)
